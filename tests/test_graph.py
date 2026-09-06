@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from satquery.graph import run_analysis
+from satquery.graph import get_graph, run_analysis
 
 
 def _trace_nodes(state) -> list[str]:
@@ -66,6 +66,65 @@ def test_geo_spatial_flow(png_file):
     assert state["current_task"] == "geo_spatial"
     assert state["final_answer"]
     assert state["evidence"][-1]["task"] == "geo_spatial_analysis"
+
+
+def test_generic_images_route_to_change_detection(png_file):
+    """Two images via the unnamed `images` pool + a change query -> change_detection."""
+    state = run_analysis(
+        query="What changed between these two images?",
+        images=[png_file("a.png"), png_file("b.png", color=(120, 90, 60))],
+    )
+    assert state["image_count"] == 2
+    assert state["current_task"] == "change_detection"
+    assert state["evidence"][-1]["task"] == "change_detection"
+    assert state["final_answer"]
+
+
+def test_generic_images_route_to_cross_modal(png_file):
+    state = run_analysis(
+        query="Compare the optical and SAR views of this area.",
+        images=[png_file("a.png"), png_file("b.png", color=(80, 80, 80))],
+    )
+    assert state["current_task"] == "cross_modal"
+    assert state["evidence"][-1]["task"] == "cross_modal_analysis"
+
+
+def test_single_generic_image_routes_to_image_analysis(png_file):
+    state = run_analysis(query="Describe the land cover.", images=[png_file("a.png")])
+    assert state["current_task"] == "image_analysis"
+    assert state["final_answer"]
+
+
+def test_knowledge_question_without_image_routes_to_retrieval():
+    state = run_analysis(query="Explain in general how SAR backscatter relates to surface roughness.")
+    assert state["input_valid"] is True
+    assert state["current_task"] == "retrieval"
+    assert state["final_answer"]
+
+
+def test_trace_node_names_are_graph_nodes(png_file):
+    from satquery.vlm import set_vlm
+
+    class BrokenVLM:
+        name = "broken"
+
+        def caption(self, *a, **k):
+            raise RuntimeError("boom")
+
+        def compare(self, *a, **k):
+            raise RuntimeError("boom")
+
+        def health(self):
+            return {}
+
+    set_vlm(BrokenVLM())
+    state = run_analysis(
+        query="Compare the optical and SAR images.",
+        images=[png_file("a.png"), png_file("b.png", color=(80, 80, 80))],
+    )
+    trace_nodes = {t["node"] for t in state["execution_trace"] if isinstance(t, dict)}
+    assert trace_nodes <= set(get_graph().get_graph().nodes), trace_nodes
+    assert "cross_modal" in trace_nodes  # not "cross_modal_analysis"
 
 
 def test_retry_is_bounded(png_file, monkeypatch):

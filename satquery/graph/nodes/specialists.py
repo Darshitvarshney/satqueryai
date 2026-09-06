@@ -31,6 +31,17 @@ from satquery.vlm.base import VLMUnavailableError
 logger = logging.getLogger(__name__)
 
 
+# Specialist task name -> graph node name (they differ for cross_modal / geo_spatial),
+# so a failed run traces the same node name a successful run does.
+_TASK_TO_NODE = {
+    "image_analysis": "image_analysis",
+    "change_detection": "change_detection",
+    "cross_modal_analysis": "cross_modal",
+    "geo_spatial_analysis": "geo_spatial",
+    "retrieval": "retrieval",
+}
+
+
 def _failed(state: SatQueryState, agent: str, task: str, message: str, reason: str | None = None) -> dict:
     evidence = {
         "evidence_id": f"{task}_error",
@@ -44,7 +55,12 @@ def _failed(state: SatQueryState, agent: str, task: str, message: str, reason: s
     return {
         "agent_results": append_result(state, evidence),
         "execution_trace": trace(
-            state, {"node": task, "status": "failed", "reason": reason or message}
+            state,
+            {
+                "node": _TASK_TO_NODE.get(task, task),
+                "status": "failed",
+                "reason": reason or message,
+            },
         ),
     }
 
@@ -56,6 +72,22 @@ def _completed(state: SatQueryState, node: str, evidence: dict, **trace_extra) -
             state, {"node": node, "status": "completed", **trace_extra}
         ),
     }
+
+
+def _resolve_pair(state: SatQueryState, key_a: str, key_b: str) -> tuple:
+    """Return the ``(a, b)`` image pair for a two-image specialist.
+
+    Uses the labelled slots (``key_a`` / ``key_b``) when the client provided
+    them, otherwise fills from the generic ``images`` pool — so ``images=[x, y]``
+    works without naming which is which.
+    """
+    a, b = state.get(key_a), state.get(key_b)
+    pool = [p for p in (state.get("images") or []) if p]
+    if not a:
+        a = next((p for p in pool if p != b), None)
+    if not b:
+        b = next((p for p in pool if p != a), None)
+    return a, b
 
 
 # --------------------------------------------------------------------------- #
@@ -95,11 +127,11 @@ def image_analysis_node(state: SatQueryState) -> dict:
 # Bi-temporal change                                                           #
 # --------------------------------------------------------------------------- #
 def change_detection_node(state: SatQueryState) -> dict:
-    t1, t2 = state.get("image_t1"), state.get("image_t2")
-    if t1 is None or t2 is None:
+    t1, t2 = _resolve_pair(state, "image_t1", "image_t2")
+    if not t1 or not t2:
         return _failed(
             state, "change_detection_agent", "change_detection",
-            "Two bi-temporal images (T1 and T2) are required.",
+            f"Change detection needs two images; {state.get('image_count', 0)} supplied.",
         )
     try:
         finding = get_vlm().compare(
@@ -134,11 +166,12 @@ def change_detection_node(state: SatQueryState) -> dict:
 # Optical + SAR                                                                #
 # --------------------------------------------------------------------------- #
 def cross_modal_agent_node(state: SatQueryState) -> dict:
-    optical, sar = state.get("optical_image"), state.get("sar_image")
-    if optical is None or sar is None:
+    optical, sar = _resolve_pair(state, "optical_image", "sar_image")
+    if not optical or not sar:
         return _failed(
             state, "cross_modal_agent", "cross_modal_analysis",
-            "Cross-modal analysis requires both an optical and a SAR image.",
+            f"Cross-modal analysis needs two images (optical + SAR); "
+            f"{state.get('image_count', 0)} supplied.",
         )
 
     vlm = get_vlm()

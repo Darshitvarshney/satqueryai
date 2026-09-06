@@ -5,15 +5,21 @@ A production backend for the SatQuery AI research notebook: a multi-agent
 **Qwen2-VL** vision model and a **Groq** LLM that answers natural-language
 questions about satellite imagery.
 
-Capabilities (auto-routed by a supervisor agent):
+Capabilities (auto-routed by a supervisor agent from your **query + how many
+images you send** — you don't pick the task, and you don't have to label the
+images):
 
-| Task | What it does | Needs |
-|------|--------------|-------|
-| `image_analysis` | Single-image VQA / scene description (optical or SAR) | 1 image |
-| `change_detection` | Bi-temporal "what changed between T1 and T2" | `image_t1` + `image_t2` |
-| `cross_modal` | Joint optical + SAR interpretation | `optical` + `sar` |
-| `geo_spatial` | CRS / bounds / resolution / pixel-space from the raster | 1 image (rasterio) |
-| `retrieval` | Remote-sensing domain-knowledge background | – |
+| Task | What it does | Images |
+|------|--------------|--------|
+| `image_analysis` | Single-image VQA / scene description (optical or SAR) | 1 |
+| `change_detection` | Bi-temporal "what changed between two views" | ≥ 2 + a change/temporal query |
+| `cross_modal` | Joint optical + SAR interpretation | ≥ 2 + an optical/SAR query |
+| `geo_spatial` | CRS / bounds / resolution / pixel-space from the raster | ≥ 1 + a geometry query (rasterio) |
+| `retrieval` | Remote-sensing domain-knowledge background | 0+ |
+
+Send images however you like — the labelled fields (`optical`, `sar`,
+`image_t1`, `image_t2`) are optional hints that tell a specialist which image is
+which; a bare `images[]` list works for every task.
 
 Every visual finding passes a strict **verifier** (strips invented
 location/date/sensor/measurements), a **reflection** step decides whether the
@@ -404,6 +410,17 @@ python scripts\smoke_test.py
 set "SATQUERY_SMOKE_REAL=1" && set "GROQ_API_KEY=..." && python scripts\smoke_test.py optical.png
 ```
 
+### API / endpoint testing (Postman)
+
+`docs/TESTING.md` is a full walkthrough. `docs/postman/` has an importable
+collection (assertions on every endpoint + routing case) with an environment
+and ready-to-attach sample images.
+
+```bash
+npm i -g newman
+make test-api        # runs the collection against a running server
+```
+
 ---
 
 ## Troubleshooting
@@ -437,6 +454,11 @@ actually loaded.
 - The supervisor is a plain classification call (deterministic rules + one LLM
   fallback) instead of a `deepagents` agent — same routing decision, fewer
   moving parts and dependencies.
+- Routing keys off **query intent + image count**, never off which upload field
+  was used. `image_t1/t2` and `optical/sar` are hints only; a two-image
+  `images[]` list reaches `change_detection` / `cross_modal` just fine, and each
+  two-image specialist fills its pair from the generic pool when the labels are
+  absent (`_resolve_pair`).
 - The text model is a fallback chain (Groq primary → Groq fallbacks →
   OpenRouter) via LangChain `with_fallbacks`; the notebook used a single model.
 - `POST /api/v1/analyze/stream` streams graph progress over SSE

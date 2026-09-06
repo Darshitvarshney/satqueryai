@@ -1,0 +1,401 @@
+{
+  "info": {
+    "_postman_id": "b7e4c2a0-5d1f-4a9c-9b2e-0a1d2c3e4f51",
+    "name": "SatQuery AI Backend",
+    "description": "End-to-end tests for every SatQuery endpoint and feature.\n\nSetup:\n1. Run the backend: `python -m satquery` (defaults to http://localhost:8000).\n2. Import `SatQuery.local.postman_environment.json` and select it.\n3. Settings > General > working directory -> the repo root, so the sample\n   files under `docs/postman/samples/` resolve (or attach files by hand).\n\nRouting note: the supervisor picks the task from the QUERY + the NUMBER of\nimages. The labelled fields (optical / sar / image_t1 / image_t2) are hints;\nthe unnamed `images` field works for every task.\n\nRun the whole thing with the Collection Runner, or `newman run` / `make test-api`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "X-API-Key", "type": "string" },
+      { "key": "value", "value": "{{api_key}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "api_key", "value": "" },
+    { "key": "job_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "00 · Meta",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('status ok', () => pm.expect(b.status).to.eql('ok'));",
+            "pm.test('reports a version', () => pm.expect(b.version).to.be.a('string'));"
+          ] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/health", "host": ["{{base_url}}"], "path": ["health"] } }
+        },
+        {
+          "name": "GET /api/v1/status",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('llm block present', () => pm.expect(b.llm).to.be.an('object'));",
+            "pm.test('fallback chain is a list', () => pm.expect(b.llm.fallback_chain).to.be.an('array'));",
+            "pm.test('vlm block present', () => pm.expect(b.vlm).to.be.an('object'));",
+            "pm.test('graph has the specialist nodes', () => {",
+            "  ['image_analysis','change_detection','cross_modal','geo_spatial','retrieval']",
+            "    .forEach(n => pm.expect(b.graph_nodes).to.include(n));",
+            "});",
+            "console.log('LLM configured:', b.llm.configured, '| chain:', b.llm.fallback_chain);",
+            "console.log('VLM:', JSON.stringify(b.vlm));"
+          ] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/v1/status", "host": ["{{base_url}}"], "path": ["api","v1","status"] } }
+        },
+        {
+          "name": "GET /api/v1/graph (Mermaid)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const t = pm.response.text();",
+            "pm.test('is a mermaid graph', () => pm.expect(t).to.include('-->'));",
+            "pm.test('contains pipeline nodes', () => { pm.expect(t).to.include('context_manager'); pm.expect(t).to.include('answer_synthesis'); });"
+          ] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/v1/graph", "host": ["{{base_url}}"], "path": ["api","v1","graph"] } }
+        }
+      ]
+    },
+    {
+      "name": "01 · Analyze — sync (multipart)",
+      "item": [
+        {
+          "name": "Image analysis — optical",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('request was valid', () => pm.expect(b.input_valid).to.be.true);",
+            "pm.test('routed to image_analysis', () => pm.expect(b.current_task).to.eql('image_analysis'));",
+            "pm.test('single-image mode', () => pm.expect(b.temporal_mode).to.eql('single'));",
+            "pm.test('produced a final answer', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);",
+            "pm.test('evidence from the image specialist', () => pm.expect(b.evidence.find(e => e.agent === 'image_analysis_agent')).to.be.an('object'));",
+            "pm.test('trace ends at answer_synthesis', () => {",
+            "  const nodes = b.execution_trace.filter(e => e && e.node).map(e => e.node);",
+            "  pm.expect(nodes).to.include('verification');",
+            "  pm.expect(nodes[nodes.length - 1]).to.eql('answer_synthesis');",
+            "});",
+            "const last = b.evidence[b.evidence.length - 1];",
+            "if (last.status === 'failed') { console.warn('VLM not usable — final_answer:', b.final_answer); }",
+            "else { pm.test('finding was verified', () => pm.expect(last.verified_finding).to.be.a('string')); }"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Is there any water body in the image? Describe the land cover.", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Image analysis — SAR",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('routed to image_analysis', () => pm.expect(b.current_task).to.eql('image_analysis'));",
+            "pm.test('modalities = [sar]', () => pm.expect(b.modalities).to.eql(['sar']));",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Describe the radar backscatter and any bright structures.", "type": "text" },
+              { "key": "sar", "type": "file", "src": "docs/postman/samples/sar1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Change detection — labelled T1 / T2",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('bi-temporal mode', () => pm.expect(b.temporal_mode).to.eql('bi_temporal'));",
+            "pm.test('image_count = 2', () => pm.expect(b.image_count).to.eql(2));",
+            "pm.test('routed to change_detection', () => pm.expect(b.current_task).to.eql('change_detection'));",
+            "pm.test('change_detection evidence produced', () => pm.expect(b.evidence.find(e => e.task === 'change_detection')).to.be.an('object'));",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "What changed between the earlier and later image?", "type": "text" },
+              { "key": "image_t1", "type": "file", "src": "docs/postman/samples/T1.png" },
+              { "key": "image_t2", "type": "file", "src": "docs/postman/samples/T2.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Change detection — unlabelled images[]",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('two images counted', () => pm.expect(b.image_count).to.eql(2));",
+            "pm.test('supervisor chose change_detection from the query + count', () => pm.expect(b.current_task).to.eql('change_detection'));",
+            "pm.test('change_detection specialist ran', () => pm.expect(b.execution_trace.some(e => e && e.node === 'change_detection')).to.be.true);",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "What changed between these two images?", "type": "text" },
+              { "key": "images", "type": "file", "src": "docs/postman/samples/T1.png" },
+              { "key": "images", "type": "file", "src": "docs/postman/samples/T2.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Cross-modal — labelled optical + SAR",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('both modalities detected', () => pm.expect(b.modalities.slice().sort()).to.eql(['optical', 'sar']));",
+            "pm.test('routed to cross_modal', () => pm.expect(b.current_task).to.eql('cross_modal'));",
+            "pm.test('cross_modal evidence produced', () => pm.expect(b.evidence.find(e => e.task === 'cross_modal_analysis')).to.be.an('object'));",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Compare the optical and SAR views. What does each modality show better?", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" },
+              { "key": "sar", "type": "file", "src": "docs/postman/samples/sar1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Cross-modal — unlabelled images[]",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('two images counted', () => pm.expect(b.image_count).to.eql(2));",
+            "pm.test('supervisor chose cross_modal from the query + count', () => pm.expect(b.current_task).to.eql('cross_modal'));",
+            "pm.test('cross_modal specialist ran', () => pm.expect(b.execution_trace.some(e => e && e.node === 'cross_modal')).to.be.true);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Compare the optical and SAR views of this area.", "type": "text" },
+              { "key": "images", "type": "file", "src": "docs/postman/samples/optical1.png" },
+              { "key": "images", "type": "file", "src": "docs/postman/samples/sar1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Geo-spatial — CRS / resolution / pixels",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('routed to geo_spatial', () => pm.expect(b.current_task).to.eql('geo_spatial'));",
+            "const geo = b.evidence.find(e => e.task === 'geo_spatial_analysis');",
+            "pm.test('geo_spatial evidence produced', () => pm.expect(geo).to.be.an('object'));",
+            "pm.test('geo finding carries pixel_space', () => { pm.expect(geo.finding).to.be.an('object'); pm.expect(geo.finding.pixel_space.width_pixels).to.be.a('number'); });",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "What are the pixel dimensions, CRS, geographic bounds and resolution of this raster?", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Retrieval — domain knowledge",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);",
+            "pm.test('routed to a valid task', () => pm.expect(['retrieval', 'image_analysis']).to.include(b.current_task));",
+            "console.log('current_task =', b.current_task);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Explain in general how SAR backscatter responds to surface roughness and soil moisture.", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Validation error — no image, image-directed query",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('422 (rejected before the graph runs)', () => pm.response.to.have.status(422));",
+            "pm.test('explains what is missing', () => pm.expect(pm.response.text().toLowerCase()).to.include('image'));"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [ { "key": "query", "value": "Describe this image.", "type": "text" } ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        },
+        {
+          "name": "Bounded retries — max_retries=1",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('retry budget respected', () => pm.expect(b.retry_count).to.be.at.most(1));",
+            "pm.test('reflection object present', () => pm.expect(b.reflection).to.be.an('object'));",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Describe the land cover and any built-up areas.", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" },
+              { "key": "max_retries", "value": "1", "type": "text" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze", "host": ["{{base_url}}"], "path": ["api","v1","analyze"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 · Analyze — JSON body",
+      "item": [
+        {
+          "name": "From base64",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('routed to image_analysis', () => pm.expect(b.current_task).to.eql('image_analysis'));",
+            "pm.test('final answer present', () => pm.expect(b.final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"query\": \"Is there a water body in this image?\",\n  \"max_retries\": 2,\n  \"optical_image_b64\": \"iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAIAAABt+uBvAAAA7UlEQVR4nO3QsQ2DABAEQaAfEmIqcUwvNOGanNAQHXhEAJalnfz1px1f+zr8wufYrp4s8/uOJd9Nz7/8LwWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQFAgKBAWCAkGBoEBQICgQnFGOBN2TwPIyAAAAAElFTkSuQmCC\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/v1/analyze/json", "host": ["{{base_url}}"], "path": ["api","v1","analyze","json"] }
+          }
+        },
+        {
+          "name": "From URL (needs internet)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('handled', () => pm.expect([200, 400]).to.include(pm.response.code));",
+            "if (pm.response.code === 200) pm.test('final answer present', () => pm.expect(pm.response.json().final_answer).to.be.a('string').and.not.empty);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"query\": \"Describe the land cover in this image.\",\n  \"optical_image_url\": \"https://picsum.photos/seed/satquery/384\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/api/v1/analyze/json", "host": ["{{base_url}}"], "path": ["api","v1","analyze","json"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 · Analyze — streaming (SSE)",
+      "item": [
+        {
+          "name": "Stream image analysis",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('content-type is an event stream', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('text/event-stream'));",
+            "const t = pm.response.text();",
+            "pm.test('emits a start event', () => pm.expect(t).to.include('event: start'));",
+            "pm.test('emits progress events', () => pm.expect(t).to.include('event: progress'));",
+            "pm.test('emits a final result event', () => pm.expect(t).to.include('event: result'));",
+            "pm.test('result carries a final_answer', () => pm.expect(t).to.include('final_answer'));"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [{ "key": "Accept", "value": "text/event-stream" }],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Describe the land cover and any water.", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/analyze/stream", "host": ["{{base_url}}"], "path": ["api","v1","analyze","stream"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 · Jobs — async",
+      "item": [
+        {
+          "name": "Create job",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+            "const b = pm.response.json();",
+            "pm.test('returns a job_id', () => pm.expect(b.job_id).to.be.a('string').and.not.empty);",
+            "pm.test('starts queued or running', () => pm.expect(['queued', 'running']).to.include(b.status));",
+            "pm.collectionVariables.set('job_id', b.job_id);",
+            "console.log('job_id =', b.job_id);"
+          ] } }],
+          "request": {
+            "method": "POST", "header": [],
+            "body": { "mode": "formdata", "formdata": [
+              { "key": "query", "value": "Describe the scene and any built-up areas.", "type": "text" },
+              { "key": "optical", "type": "file", "src": "docs/postman/samples/optical1.png" }
+            ] },
+            "url": { "raw": "{{base_url}}/api/v1/jobs", "host": ["{{base_url}}"], "path": ["api","v1","jobs"] }
+          }
+        },
+        {
+          "name": "Get job (re-send until succeeded)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('known status', () => pm.expect(['queued', 'running', 'succeeded', 'failed']).to.include(b.status));",
+            "if (b.status === 'succeeded') pm.test('result carries a final answer', () => pm.expect(b.result.final_answer).to.be.a('string').and.not.empty);",
+            "else if (b.status === 'failed') pm.test('failure has an error message', () => pm.expect(b.error).to.be.a('string'));",
+            "else console.log('still', b.status, '- re-send this request');"
+          ] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/v1/jobs/{{job_id}}", "host": ["{{base_url}}"], "path": ["api","v1","jobs","{{job_id}}"] } }
+        },
+        {
+          "name": "List jobs",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const b = pm.response.json();",
+            "pm.test('returns an array', () => pm.expect(b).to.be.an('array'));",
+            "pm.test('includes the job we created', () => pm.expect(b.map(j => j.job_id)).to.include(pm.collectionVariables.get('job_id')));"
+          ] } }],
+          "request": {
+            "method": "GET", "header": [],
+            "url": { "raw": "{{base_url}}/api/v1/jobs?limit=20", "host": ["{{base_url}}"], "path": ["api","v1","jobs"], "query": [{ "key": "limit", "value": "20" }] }
+          }
+        },
+        {
+          "name": "Get job — unknown id → 404",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('404', () => pm.response.to.have.status(404));"] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/v1/jobs/does-not-exist", "host": ["{{base_url}}"], "path": ["api","v1","jobs","does-not-exist"] } }
+        }
+      ]
+    },
+    {
+      "name": "05 · Auth (run with API_KEYS set)",
+      "description": "Passes only when the server was started with API_KEYS set. Put the same value in the `api_key` environment variable.",
+      "item": [
+        {
+          "name": "Missing key → 401",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('rejected or auth-disabled', () => pm.expect([200, 401]).to.include(pm.response.code));",
+            "if (pm.response.code === 200) console.warn('Server has no API_KEYS set — auth is disabled.');"
+          ] } }],
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/v1/jobs", "host": ["{{base_url}}"], "path": ["api","v1","jobs"] } }
+        },
+        {
+          "name": "Valid key → 200",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('returns the job list', () => pm.expect(pm.response.json()).to.be.an('array'));"
+          ] } }],
+          "request": { "method": "GET", "header": [], "url": { "raw": "{{base_url}}/api/v1/jobs", "host": ["{{base_url}}"], "path": ["api","v1","jobs"] } }
+        }
+      ]
+    }
+  ]
+}

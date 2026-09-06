@@ -29,6 +29,7 @@ _GEO_WORDS = (
 
 def determine_required_action(state: SatQueryState, reflection_text: str) -> str:
     query = (state.get("query") or "").lower()
+    n_images = int(state.get("image_count", 0) or 0)
     all_results = list(state.get("evidence", [])) + list(state.get("agent_results", []))
 
     optical_sar_requested = (
@@ -43,23 +44,19 @@ def determine_required_action(state: SatQueryState, reflection_text: str) -> str
         or item.get("task") in ("cross_modal_analysis", "cross_modal")
         for item in all_results
     )
-    if optical_sar_requested and not cross_modal_present:
+    if optical_sar_requested and not cross_modal_present and n_images >= 2:
         return "CROSS_MODAL"
 
-    if (
-        any(word in query for word in _CHANGE_WORDS)
-        and state.get("image_t1") is not None
-        and state.get("image_t2") is not None
-    ):
+    if any(word in query for word in _CHANGE_WORDS) and n_images >= 2:
         return "CHANGE_DETECTION"
 
-    if any(word in query for word in _GEO_WORDS):
+    if any(word in query for word in _GEO_WORDS) and n_images >= 1:
         return "GEO_SPATIAL"
 
     match = _ACTION_RE.search(reflection_text)
     if match:
         return match.group(1).upper()
-    return "IMAGE_ANALYSIS"
+    return "IMAGE_ANALYSIS" if n_images >= 1 else "RETRIEVAL"
 
 
 def reflection_node(state: SatQueryState) -> dict:
@@ -125,8 +122,30 @@ def reflection_node(state: SatQueryState) -> dict:
     try:
         reflection_text = invoke_text(prompt).strip()
     except Exception as exc:  # noqa: BLE001
+        # Can't judge sufficiency without the model — accept the current evidence
+        # rather than burning retries on an arbitrary specialist.
         logger.warning("Reflection LLM unavailable: %s", exc)
-        reflection_text = "DECISION: VALIDATED\nREQUIRED_ACTION: NONE\nCONFIDENCE: 0.0"
+        reflection = {
+            "decision": "VALIDATED",
+            "required_action": "NONE",
+            "reason": f"Reflection model unavailable ({exc}); proceeding with current evidence.",
+            "confidence": evidence_confidence,
+            "retry_count": retry_count,
+        }
+        return {
+            "reflection": reflection,
+            "needs_reanalysis": False,
+            "execution_trace": trace(
+                state,
+                {
+                    "node": "reflection",
+                    "status": "completed",
+                    "decision": "VALIDATED",
+                    "required_action": "NONE",
+                    "reason": "llm_unavailable",
+                },
+            ),
+        }
 
     decision_match = _DECISION_RE.search(reflection_text)
     decision = decision_match.group(1).upper() if decision_match else "NEEDS_ANALYSIS"
@@ -141,13 +160,17 @@ def reflection_node(state: SatQueryState) -> dict:
         and reflection_confidence < min_confidence
         and retry_count < max_retries
     ):
-        decision = "NEEDS_ANALYSIS"
-        if required_action == "NONE":
-            required_action = determine_required_action(state, reflection_text)
-        reflection_text += (
-            f"\nConfidence {reflection_confidence:.2f} is below minimum threshold "
-            f"{min_confidence:.2f}. Additional analysis required."
-        )
+        # Only retry if there is a concrete specialist to hand off to.
+        candidate = required_action
+        if candidate == "NONE":
+            candidate = determine_required_action(state, reflection_text)
+        if candidate != "NONE":
+            decision = "NEEDS_ANALYSIS"
+            required_action = candidate
+            reflection_text += (
+                f"\nConfidence {reflection_confidence:.2f} is below minimum threshold "
+                f"{min_confidence:.2f}. Additional analysis required."
+            )
 
     if retry_count >= max_retries:
         decision = "VALIDATED"

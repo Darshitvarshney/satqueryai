@@ -1,4 +1,4 @@
-.PHONY: help install install-ml install-geo install-dev dev run test smoke docker
+.PHONY: help install install-ml install-geo install-dev dev run test test-api smoke docker
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*?## "} {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -23,6 +23,10 @@ run:          ## Run the API (production style)
 
 test:         ## Run the test suite (VLM + LLM stubbed)
 	pytest
+
+test-api:     ## Run the Postman collection against a running server (needs: npm i -g newman)
+	newman run docs/postman/SatQuery.postman_collection.json \
+	  -e docs/postman/SatQuery.local.postman_environment.json --working-dir .
 
 smoke:        ## Run one analysis end to end with stubs
 	python scripts/smoke_test.py
