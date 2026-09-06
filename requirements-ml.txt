@@ -1,0 +1,12 @@
+# Local vision model (Qwen2-VL). Needs a GPU for practical latency.
+#
+# Install a torch build that matches your platform FIRST, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# then:
+#   pip install -r requirements-ml.txt
+
+torch>=2.4
+transformers>=4.45
+accelerate>=0.34
+qwen-vl-utils>=0.0.8
+# bitsandbytes>=0.43        # only if you switch to a 4-bit checkpoint

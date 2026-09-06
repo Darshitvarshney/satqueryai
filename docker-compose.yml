@@ -1,0 +1,32 @@
+services:
+  satquery:
+    build: .
+    image: satquery-backend:latest
+    ports:
+      - "8000:8000"
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      GROQ_FALLBACK_MODELS: ${GROQ_FALLBACK_MODELS:-llama-3.3-70b-versatile,llama-3.1-8b-instant}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b}
+      VLM_BACKEND: ${VLM_BACKEND:-disabled}
+      VLM_MODEL_ID: ${VLM_MODEL_ID:-manny2706/satquery-qwen2vl-16bit}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      API_KEYS: ${API_KEYS:-}
+    volumes:
+      - ./var:/app/var
+    restart: unless-stopped
+
+    # --- Local GPU inference (VLM_BACKEND=local) --------------------------
+    # 1. Build with the ML deps enabled in the Dockerfile.
+    # 2. Install the NVIDIA Container Toolkit on the host.
+    # 3. Uncomment:
+    # gpus: all
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]

@@ -1,0 +1,5 @@
+# Geo-spatial specialist tools (optional).
+# Without these, /api/v1 still works: the geo-spatial node falls back to
+# pixel-space info from Pillow and reports that georeferencing is unavailable.
+rasterio>=1.3
+pyproj>=3.6
