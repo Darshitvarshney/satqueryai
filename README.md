@@ -64,14 +64,16 @@ scripts/smoke_test.py  # one end-to-end run with stubs
 
 Requires **Python 3.11+**.
 
+**Linux / macOS (bash)**
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 
 # 1. Core backend (API + orchestration, CPU-only)
 pip install -r requirements.txt && pip install --no-deps -e .
 
-# 2. (optional) local vision model — install torch for your platform first
-pip install torch --index-url https://download.pytorch.org/whl/cu124
+# 2. (optional) local vision model — install torch + torchvision first
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements-ml.txt
 
 # 3. (optional) geospatial tools
@@ -80,11 +82,62 @@ pip install -r requirements-geo.txt
 
 `make install`, `make install-ml`, `make install-geo`, `make install-dev` do the same.
 
+### Windows (cmd) — full install to run
+
+`make` is not available on Windows; run the commands directly. From the project
+folder (the one containing `requirements.txt`):
+
+```bat
+:: 0. virtual environment
+py -3 -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+
+:: 1. core backend  (API + LangGraph + Groq/OpenRouter)  — always needed
+pip install -r requirements.txt
+pip install --no-deps -e .
+
+:: 2. vision model deps (Qwen2-VL). Pick ONE torch line (torchvision is required):
+::   NVIDIA GPU (CUDA 12.x):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+::   no GPU (CPU only):
+:: pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-ml.txt
+::   4-bit / quantized VLM_MODEL_ID also needs bitsandbytes + an NVIDIA GPU:
+:: pip install bitsandbytes
+
+:: 3. geospatial specialist tools
+pip install -r requirements-geo.txt
+
+:: 4. test tooling (optional)
+pip install -r requirements-dev.txt
+
+:: 5. config — then open .env and set GROQ_API_KEY=...
+copy .env.example .env
+
+:: 6. run
+python -m satquery
+```
+
+Open http://localhost:8000/docs
+
+**Notes**
+- Every new terminal: `cd` to the project and re-run `.venv\Scripts\activate.bat`.
+- **API only, no model download** (~skips a large checkpoint): skip steps 2–3 and
+  set `VLM_BACKEND=disabled` in `.env`. Image tasks then return an "unavailable"
+  message; routing / verification / synthesis still work.
+- If `pip install -r requirements-geo.txt` fails (rasterio/GDAL), it is optional —
+  the geo-spatial node falls back to pixel-space info from Pillow.
+- PowerShell instead of cmd: activate with `.venv\Scripts\Activate.ps1`
+  (first run `Set-ExecutionPolicy -Scope Process RemoteSigned` if blocked).
+  If `py` is missing, use `python`.
+
 ---
 
 ## Configure
 
-Copy `.env.example` to `.env` and set at least `GROQ_API_KEY`.
+Copy `.env.example` to `.env` and set at least `GROQ_API_KEY`
+(bash: `cp .env.example .env` — Windows cmd: `copy .env.example .env`).
 
 | Variable | Default | Notes |
 |----------|---------|-------|
@@ -94,7 +147,7 @@ Copy `.env.example` to `.env` and set at least `GROQ_API_KEY`.
 | `OPENROUTER_API_KEY` | – | optional final fallback (OpenAI-compatible) |
 | `OPENROUTER_MODEL` | `openai/gpt-oss-120b` | model used on OpenRouter |
 | `VLM_BACKEND` | `local` | `local` (Qwen2-VL via transformers) or `disabled` |
-| `VLM_MODEL_ID` | `manny2706/satquery-qwen2vl-16bit` | HF checkpoint |
+| `VLM_MODEL_ID` | `manny2706/satquery-qwen2vl-4bitQuantized` | HF checkpoint |
 | `VLM_DEVICE_MAP` | `auto` | passed to `from_pretrained` |
 | `VLM_LOAD_ON_STARTUP` | `false` | warm the model during app startup |
 | `API_KEYS` | – | comma-separated; if set, callers must send `X-API-Key` |
@@ -117,6 +170,8 @@ what is missing. `GET /api/v1/status` reports exactly what is configured.
 
 ## Run
 
+**Linux / macOS (bash)**
+
 ```bash
 make dev          # uvicorn with autoreload on :8000
 # or
@@ -125,14 +180,44 @@ python -m satquery
 uvicorn satquery.main:app --host 0.0.0.0 --port 8000
 ```
 
+**Windows (cmd)** — activate the venv first (`.venv\Scripts\activate.bat`):
+
+```bat
+:: reads .env automatically
+python -m satquery
+
+:: with autoreload
+uvicorn satquery.main:app --host 0.0.0.0 --port 8000 --reload
+
+:: override a setting for this shell only (no .env edit)
+set "VLM_BACKEND=disabled"
+set "API_PORT=9000"
+python -m satquery
+```
+
+> In cmd, `set "NAME=value"` applies to the current shell session. Inline
+> `NAME=value command` (bash style) does **not** work.
+
 Interactive docs: `http://localhost:8000/docs`
 
 ### Docker
 
+`docker compose` is identical on Windows (Docker Desktop). Only the way you pass
+env vars differs — put them in `.env` or `set` them first:
+
 ```bash
-docker compose up --build          # API only, VLM disabled by default
-GROQ_API_KEY=... VLM_BACKEND=disabled docker compose up
+# Linux / macOS
+GROQ_API_KEY=... VLM_BACKEND=disabled docker compose up --build
 ```
+
+```bat
+:: Windows cmd
+set "GROQ_API_KEY=..."
+set "VLM_BACKEND=disabled"
+docker compose up --build
+```
+
+Or just fill `.env` (compose reads it) and run `docker compose up --build`.
 
 For in-container GPU inference, enable the ML deps in the `Dockerfile`, switch to
 a CUDA base image, and uncomment the GPU block in `docker-compose.yml`.
@@ -142,6 +227,10 @@ a CUDA base image, and uncomment the GPU block in `docker-compose.yml`.
 ## API
 
 All analysis routes are under `/api/v1` and honour `X-API-Key` when `API_KEYS` is set.
+
+> **Windows cmd:** `curl` ships with Windows 10/11. The examples below are bash —
+> in cmd, replace the `\` line-continuations with `^`, and use `"` instead of `'`.
+> A cmd version of the first example is shown under it.
 
 ### `POST /api/v1/analyze` — synchronous, multipart
 
@@ -160,6 +249,13 @@ curl -s http://localhost:8000/api/v1/analyze \
 curl -s http://localhost:8000/api/v1/analyze \
   -F 'query=Compare the optical and SAR views.' \
   -F 'optical=@optical1.png' -F 'sar=@sar1.png'
+```
+
+```bat
+:: Windows cmd
+curl -s http://localhost:8000/api/v1/analyze ^
+  -F "query=Describe the land cover and any built-up areas." ^
+  -F "optical=@optical1.png"
 ```
 
 ### `POST /api/v1/analyze/stream` — Server-Sent Events
@@ -185,6 +281,11 @@ data: {"final_answer": "...", "confidence": 0.82, "evidence": [...], ...}
 ```bash
 curl -N http://localhost:8000/api/v1/analyze/stream \
   -F 'query=Describe the land cover.' -F 'optical=@optical1.png'
+```
+
+```bat
+:: Windows cmd  (-N / --no-buffer streams events as they arrive)
+curl -N http://localhost:8000/api/v1/analyze/stream -F "query=Describe the land cover." -F "optical=@optical1.png"
 ```
 
 ```js
@@ -242,6 +343,12 @@ curl -s http://localhost:8000/api/v1/jobs/$JOB      # -> status + result when do
 curl -s http://localhost:8000/api/v1/jobs           # recent jobs
 ```
 
+```bat
+:: Windows cmd — POST returns JSON containing "job_id"; copy it, then poll:
+curl -s http://localhost:8000/api/v1/jobs -F "query=..." -F "optical=@o.png"
+curl -s http://localhost:8000/api/v1/jobs/PASTE_JOB_ID_HERE
+```
+
 The job queue is in-process and single-worker (one GPU). For horizontal scaling,
 put Celery/RQ/Arq behind `satquery.jobs.manager.JobManager`.
 
@@ -277,8 +384,8 @@ for event in stream_analysis(query="...", optical_image="optical1.png"):
 ## Tests
 
 ```bash
-make install-dev
-make test          # or: pytest
+make install-dev        # bash;  Windows: pip install -r requirements-dev.txt
+make test               # or, on any OS:  pytest
 ```
 
 The suite stubs the vision model and the Groq LLM (`satquery.vlm.set_vlm`,
@@ -286,9 +393,42 @@ The suite stubs the vision model and the Groq LLM (`satquery.vlm.set_vlm`,
 offline and deterministically** — no GPU, no API key.
 
 ```bash
-python scripts/smoke_test.py                 # stubbed end-to-end
+# Linux / macOS
+python scripts/smoke_test.py                                  # stubbed end-to-end
 SATQUERY_SMOKE_REAL=1 GROQ_API_KEY=... python scripts/smoke_test.py optical.png
 ```
+
+```bat
+:: Windows cmd
+python scripts\smoke_test.py
+set "SATQUERY_SMOKE_REAL=1" && set "GROQ_API_KEY=..." && python scripts\smoke_test.py optical.png
+```
+
+---
+
+## Troubleshooting
+
+**`final_answer: "... Vision model error: ... Qwen2VLVideoProcessor requires the
+Torchvision library ..."`**
+transformers loads a video sub-processor for Qwen2-VL. Install it:
+
+```
+pip install torchvision --index-url https://download.pytorch.org/whl/cu124   # match your torch build
+```
+
+**`... 'NoneType' object has no attribute 'apply_chat_template'`**
+follow-on symptom of the same problem — the processor failed to load. Fix the
+underlying error above, then restart the server.
+
+**`VLM_MODEL_ID` ending in `4bit` / `4bitQuantized` / `8bit`**
+a pre-quantized (bitsandbytes) checkpoint additionally needs
+`pip install bitsandbytes` **and an NVIDIA GPU** — bitsandbytes has no usable CPU
+path. On a CPU-only box use the non-quantized checkpoint
+(`manny2706/satquery-qwen2vl-16bit`) or `VLM_BACKEND=disabled`.
+
+**`config.py` / `.env` mismatch**
+`.env` wins over the defaults in `config.py`; `GET /api/v1/status` shows what
+actually loaded.
 
 ---
 

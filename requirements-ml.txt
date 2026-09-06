@@ -1,12 +1,17 @@
 # Local vision model (Qwen2-VL). Needs a GPU for practical latency.
 #
-# Install a torch build that matches your platform FIRST, e.g.:
-#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# Install torch + torchvision matching your platform FIRST, e.g.:
+#   CUDA 12.x:  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#   CPU only :  pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 # then:
 #   pip install -r requirements-ml.txt
 
 torch>=2.4
+torchvision>=0.19          # required: transformers loads Qwen2VLVideoProcessor
 transformers>=4.45
 accelerate>=0.34
 qwen-vl-utils>=0.0.8
-# bitsandbytes>=0.43        # only if you switch to a 4-bit checkpoint
+
+# Pre-quantized (4-bit / 8-bit bitsandbytes) checkpoints ALSO need this,
+# and bitsandbytes 4-bit inference requires an NVIDIA GPU:
+# bitsandbytes>=0.43

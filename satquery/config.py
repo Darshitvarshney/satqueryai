@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # local     -> load the Qwen2-VL checkpoint locally with transformers/torch
     # disabled  -> image specialists return a clear "vision model disabled" note
     vlm_backend: str = "local"
-    vlm_model_id: str = "manny2706/satquery-qwen2vl-16bit"
+    vlm_model_id: str = "manny2706/satquery-qwen2vl-4bitQuantized"
     vlm_device_map: str = "auto"
     vlm_torch_dtype: str = "bfloat16"
     vlm_max_new_tokens: int = 256

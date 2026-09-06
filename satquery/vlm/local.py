@@ -41,10 +41,10 @@ class LocalQwen2VLBackend:
 
     # ------------------------------------------------------------------ load
     def load(self) -> None:
-        if self._model is not None:
+        if self.is_loaded:
             return
         with self._load_lock:
-            if self._model is not None:
+            if self.is_loaded:
                 return
             import torch
             from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
@@ -56,18 +56,33 @@ class LocalQwen2VLBackend:
                 self.device_map,
                 self.torch_dtype_name,
             )
-            self._model = Qwen2VLForConditionalGeneration.from_pretrained(
-                self.model_id,
-                torch_dtype=dtype,
-                device_map=self.device_map,
-            )
-            self._model.eval()
-            self._processor = AutoProcessor.from_pretrained(self.model_id)
+
+            # Processor first: cheap and the usual failure point (a missing
+            # torchvision / tokenizer backend). Assign to self only once BOTH
+            # halves succeed so a partial failure doesn't leave a broken state
+            # that the `is_loaded` guard would happily skip.
+            try:
+                processor = AutoProcessor.from_pretrained(self.model_id)
+                model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    self.model_id,
+                    torch_dtype=dtype,
+                    device_map=self.device_map,
+                )
+            except ImportError as exc:
+                raise RuntimeError(
+                    f"Could not load VLM '{self.model_id}': {exc} "
+                    "(hint: `pip install torchvision`; quantized checkpoints also "
+                    "need `pip install bitsandbytes` and an NVIDIA GPU)."
+                ) from exc
+
+            model.eval()
+            self._processor = processor
+            self._model = model
             logger.info("VLM ready: %s", self.model_id)
 
     @property
     def is_loaded(self) -> bool:
-        return self._model is not None
+        return self._model is not None and self._processor is not None
 
     # ------------------------------------------------------------- inference
     def _generate(self, messages: list[dict], images: list[Any], max_new_tokens: int | None) -> str:

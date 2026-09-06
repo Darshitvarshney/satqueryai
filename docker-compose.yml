@@ -11,7 +11,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-oss-120b}
       VLM_BACKEND: ${VLM_BACKEND:-disabled}
-      VLM_MODEL_ID: ${VLM_MODEL_ID:-manny2706/satquery-qwen2vl-16bit}
+      VLM_MODEL_ID: ${VLM_MODEL_ID:-manny2706/satquery-qwen2vl-4bitQuantized}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       API_KEYS: ${API_KEYS:-}
     volumes:
